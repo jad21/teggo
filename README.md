@@ -62,7 +62,7 @@ Teggo es una librería que lleva la experiencia de los componentes y sintaxis ti
 
 ## ¿Cómo usar?
 
-1. Instala Teggo en tu proyecto (próximamente: `go get github.com/tuusuario/teggo`)
+1. Instala Teggo en tu proyecto (próximamente: `go get github.com/jad21/teggo`)
 2. Escribe tus componentes y páginas en archivos `.gotpl`
 3. Usa la función `ParseTagsToGoTpl` de Teggo para transformar tus vistas a Go templates estándar.
 4. Renderiza usando las helpers de Teggo en tu aplicación.
@@ -71,7 +71,7 @@ Teggo es una librería que lleva la experiencia de los componentes y sintaxis ti
 package main
 
 import (
-    "github.com/tuusuario/teggo"
+    "github.com/jad21/teggo"
     "html/template"
     "os"
 )

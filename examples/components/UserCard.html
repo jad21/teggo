@@ -1,0 +1,8 @@
+{{/*props: Name string, Email string, ShowActions bool, Slot any */}}
+<div class="usercard">
+  <h3>{{.Name}}</h3>
+  <p>{{.Email}}</p>
+  {{if .ShowActions}}
+    {{template "Slot" .}}
+  {{end}}
+</div>

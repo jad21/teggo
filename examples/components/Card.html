@@ -1,0 +1,10 @@
+<!-- props: Title string, Slot any, Footer any -->
+<div class="card">
+  <h2>{{.Title}}</h2>
+  <section>
+    {{template "Slot" .}}
+  </section>
+  <footer>
+    {{template "Footer" .}}
+  </footer>
+</div>

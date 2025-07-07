@@ -1,0 +1,21 @@
+<components.Card Title="Panel de Usuarios">
+  {{if .IsAdmin}}
+  <p>¡Bienvenido, administrador!</p>
+  {{else}}
+  <p>Bienvenido, usuario estándar</p>
+  {{end}}
+
+  <ul>
+    {{range $user := .Users}}
+    <li>
+      <components.UserCard {...$user} ShowActions="true">
+        <components.Button Class="edit">Editar</components.Button>
+      </components.UserCard>
+    </li>
+    {{end}}
+  </ul>
+
+  <components.Footer slot="Footer">
+    <small>© 2025 Teggo - Todos los derechos reservados.</small>
+  </components.Footer>
+</components.Card>
