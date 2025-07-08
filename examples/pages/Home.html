@@ -1,4 +1,4 @@
-<components.Card Title="Panel de Usuarios">
+<Card Title="Panel de Usuarios">
   {{if .IsAdmin}}
   <p>¡Bienvenido, administrador!</p>
   {{else}}
@@ -8,14 +8,14 @@
   <ul>
     {{range $user := .Users}}
     <li>
-      <components.UserCard {...$user} ShowActions="true">
-        <components.Button Class="edit">Editar</components.Button>
-      </components.UserCard>
+      <UserCard {...$user} ShowActions="true">
+        <Button Class="edit">Editar</Button>
+      </UserCard>
     </li>
     {{end}}
   </ul>
 
-  <components.Footer slot="Footer">
+  <Footer slot="Footer">
     <small>© 2025 Teggo - Todos los derechos reservados.</small>
-  </components.Footer>
-</components.Card>
+  </Footer>
+</Card>

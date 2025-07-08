@@ -1,14 +1,8 @@
+// engine.go
+// Paquete teggo — Núcleo de compilación y renderizado de templates tipo JSX/Go.
 // -----------------------------------------------------------------------------
-// Teggo — JSX‑like Components for Go
-// engine.go – núcleo de compilación y renderizado de plantillas
-// -----------------------------------------------------------------------------
-//   - Compila todos los archivos indicados en `paths`.
-//   - Registra nombres lógicos «subdir.Base» usando el directorio común
-//     como raíz (examples/pages/Home.html → pages.Home).
-//   - Clona el set para cada ejecución (thread‑safe).
-//   - Expone helpers dict/merge/cat y partial seguro.
-//
-// -----------------------------------------------------------------------------
+// Proporciona la estructura Engine, compilador y renderizador thread-safe.
+
 package teggo
 
 import (
@@ -24,17 +18,14 @@ import (
 	"unicode"
 )
 
-// Engine mantiene el set de templates compilado y la bandera debug.
+// Engine mantiene el set de templates compilado y la bandera de debug.
 type Engine struct {
-	base  *template.Template // nunca se ejecuta ni lista nombres
+	base  *template.Template // Set base, nunca ejecutar ni clonar luego de ejecutar.
 	debug bool
 }
 
-// -----------------------------------------------------------------------------
-//  Construcción
-// -----------------------------------------------------------------------------
-
-// NewEngine compila todos los archivos indicados en paths.
+// NewEngine compila todos los archivos indicados en paths en un set lógico único.
+// Registra nombres lógicos tipo «pages.Home». Devuelve el engine listo para renderizar.
 func NewEngine(paths []string, debug bool) (*Engine, error) {
 	e := &Engine{debug: debug}
 	rootDir := commonDir(paths)
@@ -46,7 +37,7 @@ func NewEngine(paths []string, debug bool) (*Engine, error) {
 			return nil, err
 		}
 
-		// Obtiene nombre lógico para cada template (ej: "pages.Home")
+		// Nombre lógico tipo "pages.Home"
 		rel, _ := filepath.Rel(rootDir, absPath)
 		logical := strings.TrimSuffix(rel, filepath.Ext(rel))
 		mainName := strings.ReplaceAll(logical, string(os.PathSeparator), ".")
@@ -56,23 +47,20 @@ func NewEngine(paths []string, debug bool) (*Engine, error) {
 		sb.WriteString(converted + "\n")
 	}
 
-	// Crea set principal (root) y lo llena con todos los templates
+	fmt.Println(sb.String())
+
+	// Crea el set principal (root)
 	root := template.New("root")
 	root.Funcs(e.funcMap(root))
 	baseSet, err := root.Parse(sb.String())
 	if err != nil {
 		return nil, err
 	}
-	e.base = baseSet // <-- JAMÁS ejecutar ni clonar después de ejecutar
-
+	e.base = baseSet // Nunca ejecutar ni clonar luego de ejecución.
 	return e, nil
 }
 
-// -----------------------------------------------------------------------------
-//  Ejecución
-// -----------------------------------------------------------------------------
-
-// Render clona el set y ejecuta el template indicado.
+// Render clona el set y ejecuta el template indicado, seguro para concurrencia.
 func (e *Engine) Render(name string, data any, w io.Writer) error {
 	execSet, err := e.base.Clone()
 	if err != nil {
@@ -82,13 +70,12 @@ func (e *Engine) Render(name string, data any, w io.Writer) error {
 	return execSet.ExecuteTemplate(w, name, data)
 }
 
-// TemplateNames devuelve la lista ordenada de nombres lógicos registrados.
+// TemplateNames retorna la lista de templates lógicos ordenados.
 func (e *Engine) TemplateNames() []string {
 	execSet, err := e.base.Clone()
 	if err != nil {
 		return nil
 	}
-
 	names := make([]string, 0, len(execSet.Templates()))
 	for _, t := range execSet.Templates() {
 		names = append(names, t.Name())
@@ -97,15 +84,13 @@ func (e *Engine) TemplateNames() []string {
 	return names
 }
 
-// -----------------------------------------------------------------------------
-//  FuncMap & helpers internos
-// -----------------------------------------------------------------------------
-
+// FuncMap retorna el mapa de funciones helper para templates, incluyendo partial.
 func (e *Engine) FuncMap() template.FuncMap {
 	return e.funcMap(e.base)
 }
 
 // funcMap produce el mapa de funciones enlazado al set indicado.
+// Incluye partial seguro (slots), helpers puros, etc.
 func (e *Engine) funcMap(set *template.Template) template.FuncMap {
 	return template.FuncMap{
 		"dict":  Dict,
@@ -117,17 +102,17 @@ func (e *Engine) funcMap(set *template.Template) template.FuncMap {
 	}
 }
 
-// safePartial ejecuta un componente aislado.
+// safePartial ejecuta un componente en aislamiento (slots).
 func (e *Engine) safePartial(_ *template.Template, name string, props map[string]interface{}) template.HTML {
 	var buf bytes.Buffer
 
-	// clonar para evitar colisiones de definiciones dinámicas
+	// Clonar para evitar colisiones de definiciones dinámicas
 	sub, err := e.base.Clone()
 	if err != nil {
 		return e.report(fmt.Errorf("clone error: %w", err))
 	}
 
-	// inyectar slots (props con clave iniciando en mayúscula)
+	// Inyecta slots: props con clave mayúscula.
 	for k, v := range props {
 		if len(k) > 0 && unicode.IsUpper(rune(k[0])) {
 			if _, perr := sub.New(k).Parse(fmt.Sprint(v)); perr != nil {
@@ -142,10 +127,11 @@ func (e *Engine) safePartial(_ *template.Template, name string, props map[string
 	return template.HTML(buf.String())
 }
 
+// report imprime el error (debug) y retorna un HTML vacío (producción).
 func (e *Engine) report(err error) template.HTML {
 	log.Printf("Teggo ▶ %v", err)
 	// if e.debug {
 	// 	return template.HTML("<!-- Teggo ERROR: " + template.HTMLEscapeString(err.Error()) + " -->")
 	// }
-	return "" // en producción devolvemos vacío
+	return "" // En producción devuelve vacío
 }

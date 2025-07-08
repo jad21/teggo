@@ -1,8 +1,10 @@
-{{/*props: Name string, Email string, ShowActions bool, Slot any */}}
+{{tag UserCard}}
+{{ /* props: Name string, Email string, ShowActions bool, Slot any */ }}
 <div class="usercard">
   <h3>{{.Name}}</h3>
   <p>{{.Email}}</p>
   {{if .ShowActions}}
-    {{template "Slot" .}}
+    {{ slot name="ShowActions"}}
   {{end}}
 </div>
+{{end}}

@@ -1,3 +1,8 @@
+// debug.go
+// Paquete teggo — Utilidades de depuración de templates
+// -----------------------------------------------------------------------------
+// Permite compilar templates individualmente para detectar errores tempranos.
+
 package teggo
 
 import (
@@ -8,20 +13,18 @@ import (
 	"strings"
 )
 
-// DebugParseTemplates compila cada archivo de forma individual para detectar
-// errores tempranos y mostrar línea / fragmento.
+// DebugParseTemplates compila cada archivo individualmente y muestra errores tempranos.
+// Si debug está activo, imprime confirmación en consola.
 func (e *Engine) DebugParseTemplates(paths []string) error {
 	rootDir := commonDir(paths)
 	for _, absPath := range paths {
 		src, _ := os.ReadFile(absPath)
-		rel, _ := filepath.Rel(rootDir, absPath)                               // e.g. "pages/Home.html"
-		logical := strings.TrimSuffix(rel, filepath.Ext(rel))                  // "pages/Home"
-		mainName := strings.ReplaceAll(logical, string(os.PathSeparator), ".") // "pages.Home"
+		rel, _ := filepath.Rel(rootDir, absPath)
+		logical := strings.TrimSuffix(rel, filepath.Ext(rel))
+		mainName := strings.ReplaceAll(logical, string(os.PathSeparator), ".")
 		base := strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
-
 		conv := ParseTagsToGoTpl(string(src), base, mainName)
 
-		// Usa funcMap del engine (no duplicas lógica)
 		_, err := template.New(filepath.Base(absPath)).Funcs(e.funcMap(nil)).Parse(conv)
 		if err != nil {
 			printTemplateError(absPath, conv, err)
@@ -34,41 +37,7 @@ func (e *Engine) DebugParseTemplates(paths []string) error {
 	return nil
 }
 
-// // DebugParseTemplates compila cada archivo de forma individual para detectar
-// // errores tempranos y mostrar línea / fragmento.
-// func DebugParseTemplates(paths []string, debug bool) error {
-// 	// tmp, err := NewEngine(paths, true)
-
-// 	// if debug {
-// 	// 	fmt.Println("✅ Todos los templates son válidos.")
-// 	// }
-// 	// return nul
-
-// 	tmp := &Engine{debug: debug}
-// 	rootDir := commonDir(paths)
-
-// 	for _, absPath := range paths {
-// 		src, _ := os.ReadFile(absPath)
-// 		rel, _ := filepath.Rel(rootDir, absPath)                                  // e.g. "pages/Home.html"
-// 		logical := strings.TrimSuffix(rel, filepath.Ext(rel))                     // "pages/Home"
-// 		mainName := strings.ReplaceAll(logical, string(os.PathSeparator), ".")    // "pages.Home"
-// 		base := strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath)) // "Home"
-
-// 		conv := ParseTagsToGoTpl(string(src), base, mainName)
-
-// 		_, err := template.New(filepath.Base(absPath)).Funcs(tmp.FuncMap()).Parse(conv)
-// 		if err != nil {
-// 			printTemplateError(absPath, conv, err)
-// 			return err
-// 		}
-// 	}
-// 	if debug {
-// 		fmt.Println("✅ Todos los templates son válidos.")
-// 	}
-// 	return nil
-// }
-
-// printTemplateError – muestra posición y contexto (±3 líneas)
+// printTemplateError muestra posición y contexto (±3 líneas).
 func printTemplateError(path, tpl string, err error) {
 	fmt.Printf("\n❌ Error en %s\n%v\n", path, err)
 	type liner interface{ Line() int }
@@ -87,6 +56,7 @@ func printTemplateError(path, tpl string, err error) {
 	}
 }
 
+// --- helpers de math pequeños ---
 func max(a, b int) int {
 	if a > b {
 		return a
@@ -100,7 +70,7 @@ func min(a, b int) int {
 	return b
 }
 
-// --- helper para directorio común ---
+// commonDir retorna el directorio común para varios paths absolutos.
 func commonDir(paths []string) string {
 	dir := filepath.Dir(paths[0])
 	for _, p := range paths[1:] {

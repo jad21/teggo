@@ -1,10 +1,12 @@
-<!-- props: Title string, Slot any, Footer any -->
+{{tag Card}}
+{{/*props: Title string, Slot any, Footer any */}}
 <div class="card">
   <h2>{{.Title}}</h2>
   <section>
-    {{template "Slot" .}}
+    {{slot}}
   </section>
   <footer>
-    {{template "Footer" .}}
+    {{slot name="Footer"}}
   </footer>
 </div>
+{{end}}
