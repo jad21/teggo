@@ -1,181 +1,289 @@
+// parser.go
+// Paquete teggo — Parser JSX-like a Go html/template compatible.
+// -----------------------------------------------------------------------------
+// Convierte sintaxis JSX-like con componentes en plantillas Go estándar.
+
 package teggo
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
+
+	"golang.org/x/net/html"
 )
 
-// Regex precompiladas
+// -----------------------------------------------------------------------------
+// ComponentRegistry — Global compartido con el Engine.
+// -----------------------------------------------------------------------------
+var componentRegistry = map[string]struct{}{}
+
+func SetComponentRegistry(reg map[string]struct{}) {
+	componentRegistry = reg
+}
+
+// -----------------------------------------------------------------------------
+// Patrones comunes
+// -----------------------------------------------------------------------------
 var (
-	tagComponentOpen = regexp.MustCompile(`<([A-Z][A-Za-z0-9]*)\s*([^>]*)>`)
-	tagComponentSelf = regexp.MustCompile(`<([A-Z][A-Za-z0-9]*)\s*([^>]*)\/>`)
-	propRE           = regexp.MustCompile(`([A-Za-z0-9_]+)=["']([^"']+)["']|\{\.\.\.([A-Za-z0-9_\.]+)\}`)
-	slotRE           = regexp.MustCompile(`([A-Za-z][A-Za-z0-9]*)\s+slot=["']([A-Za-z0-9_]+)["']`)
-	tagBlockRE       = regexp.MustCompile(`(?s)\{\{tag\s+([A-Za-z][A-Za-z0-9_]*)\}\}(.*?)\n\{\{\s*end\s*\}\}`)
-	reNamedSlot      = regexp.MustCompile(`\{\{\s*slot\s+name=['"]([A-Za-z0-9_]+)['"]\s*\}\}`)
-	reAnonSlot       = regexp.MustCompile(`\{\{\s*slot\s*\}\}`)
+	tagPattern       = regexp.MustCompile(`{{\s*tag\s+(\w+)\s*}}`)
+	slotNamedPattern = regexp.MustCompile(`{{\s*slot\s+name\s*=\s*"(.*?)"\s*}}`)
+	slotAnonPattern  = regexp.MustCompile(`{{\s*slot\s*}}`)
+	mustacheBlock    = regexp.MustCompile(`{{.*?}}`)
 )
 
-type parserState struct {
-	fileName string
-	mainName string
-	slotID   int
-	slots    []string // defines de slots acumulados
+// -----------------------------------------------------------------------------
+// Entrada principal
+// -----------------------------------------------------------------------------
+func ParseTagsToGoTpl(source, base, logicalName string) string {
+	if hasTagDirective(source) {
+		return parseComponent(source)
+	}
+	return parsePage(source, logicalName)
 }
 
-func ParseTagsToGoTpl(src, fileName, mainName string) string {
-	var out strings.Builder
+// Detecta si es un componente con {{tag Name}}
+func hasTagDirective(source string) bool {
+	return tagPattern.MatchString(source)
+}
 
-	// 1) Procesar bloques {{tag ...}}
-	matches := tagBlockRE.FindAllStringSubmatchIndex(src, -1)
-	if len(matches) > 0 {
-		for _, m := range matches {
-			name := src[m[2]:m[3]]
-			body := src[m[4]:m[5]]
-
-			ps := &parserState{fileName: fileName, mainName: mainName}
-			content := ps.convert(body)
-			content = strings.Trim(content, "\n")
-
-			// Primero los defines de slots
-			for _, slot := range ps.slots {
-				out.WriteString(slot + "\n")
-			}
-			// Luego el define principal, sin líneas extras
-			out.WriteString(fmt.Sprintf("{{define \"%s\"}}\n%s\n{{end}}\n", name, content))
+// -----------------------------------------------------------------------------
+// Conversión de definición de componente
+// -----------------------------------------------------------------------------
+func parseComponent(source string) string {
+	out := tagPattern.ReplaceAllStringFunc(source, func(m string) string {
+		match := tagPattern.FindStringSubmatch(m)
+		if len(match) > 1 {
+			return fmt.Sprintf(`{{define "%s"}}`, match[1])
 		}
-		return out.String()
-	}
-
-	// 2) Sin bloques tag: archivo completo
-	ps := &parserState{fileName: fileName, mainName: mainName}
-	content := ps.convert(src)
-	content = strings.Trim(content, "\n")
-	for _, slot := range ps.slots {
-		out.WriteString(slot + "\n")
-	}
-	out.WriteString(fmt.Sprintf("{{define \"%s\"}}\n%s\n{{end}}\n", mainName, content))
-	return out.String()
-}
-
-func (ps *parserState) convert(input string) string {
-	output := input
-
-	// Self-closing <Tag .../>
-	output = tagComponentSelf.ReplaceAllStringFunc(output, func(m string) string {
-		sub := tagComponentSelf.FindStringSubmatch(m)
-		tag := sub[1]
-		props := ps.parseProps(sub[2])
-		return fmt.Sprintf(`{{partial "%s" (%s)}}`, tag, props)
+		return m
 	})
+	out = slotNamedPattern.ReplaceAllString(out, `{{template "$1" .}}`)
+	out = slotAnonPattern.ReplaceAllString(out, `{{template "slot" .}}`)
+	return out
+}
 
-	// Componentes con matching anidado
-	for {
-		m := tagComponentOpen.FindStringSubmatchIndex(output)
-		if m == nil {
-			break
-		}
-		tag := output[m[2]:m[3]]
-		if strings.EqualFold(tag, ps.fileName) {
-			break
-		}
-		propsStr := output[m[4]:m[5]]
-		openTag := fmt.Sprintf("<%s", tag)
-		closeTag := fmt.Sprintf("</%s>", tag)
-		start, innerStart := m[0], m[1]
-		depth, i := 1, innerStart
+// -----------------------------------------------------------------------------
+// Conversión de página (uso de componentes en JSX-like)
+// -----------------------------------------------------------------------------
+func parsePage(source, logicalName string) string {
+	// 1️⃣ Extraer y proteger bloques GoTpl
+	cleanSrc, blocks := extractTemplateBlocks(source)
 
-		for i < len(output) {
-			nextOpen := strings.Index(output[i:], openTag)
-			nextClose := strings.Index(output[i:], closeTag)
-			if nextClose == -1 {
-				break
+	// 2️⃣ Marcar componentes registrados con teggo-component
+	markedSrc := markComponentTags(cleanSrc)
+
+	// 3️⃣ Parsear como HTML
+	node, err := html.Parse(strings.NewReader(markedSrc))
+	if err != nil {
+		return wrapAsDefine(logicalName, source)
+	}
+
+	// 4️⃣ Buscar contenido real (body)
+	body := findBody(node)
+	if body == nil {
+		return wrapAsDefine(logicalName, source)
+	}
+
+	// 5️⃣ Procesar nodos
+	slotCounter := 0
+	var slotDefs []string
+	var buf bytes.Buffer
+
+	for c := body.FirstChild; c != nil; c = c.NextSibling {
+		if err := walkNode(&buf, c, logicalName, &slotCounter, &slotDefs, blocks); err != nil {
+			return wrapAsDefine(logicalName, source)
+		}
+	}
+
+	// 6️⃣ Generar define principal
+	var final bytes.Buffer
+	final.WriteString(fmt.Sprintf(`{{define "%s"}}`, logicalName))
+	final.WriteString("\n")
+	final.WriteString(buf.String())
+	final.WriteString("\n{{end}}\n")
+
+	// 7️⃣ Adjuntar defines de slots hijos
+	for _, def := range slotDefs {
+		final.WriteString(def)
+		final.WriteString("\n")
+	}
+
+	fmt.Println(final.String())
+
+	return final.String()
+}
+
+// -----------------------------------------------------------------------------
+// Reemplazo previo: Marcar componentes Teggo válidos
+// -----------------------------------------------------------------------------
+func markComponentTags(input string) string {
+	for comp := range componentRegistry {
+		// Reemplazar apertura
+		openTag := regexp.MustCompile(fmt.Sprintf(`<%s(\b|>)`, regexp.QuoteMeta(comp)))
+		input = openTag.ReplaceAllString(input, fmt.Sprintf(`<teggo-component teggo:name="%s"$1`, comp))
+
+		// Reemplazar cierre
+		closeTag := regexp.MustCompile(fmt.Sprintf(`</%s>`, regexp.QuoteMeta(comp)))
+		input = closeTag.ReplaceAllString(input, `</teggo-component>`)
+	}
+	return input
+}
+
+// -----------------------------------------------------------------------------
+// Helpers para parseo y reemplazo
+// -----------------------------------------------------------------------------
+func wrapAsDefine(name, body string) string {
+	return fmt.Sprintf(`{{define "%s"}}
+%s
+{{end}}`, name, body)
+}
+
+func extractTemplateBlocks(input string) (string, []string) {
+	blocks := []string{}
+	output := mustacheBlock.ReplaceAllStringFunc(input, func(m string) string {
+		idx := len(blocks)
+		blocks = append(blocks, m)
+		return fmt.Sprintf("__TPL_%d__", idx)
+	})
+	return output, blocks
+}
+
+func restoreTemplateBlocks(input string, blocks []string) string {
+	out := input
+	for i, block := range blocks {
+		out = strings.ReplaceAll(out, fmt.Sprintf("__TPL_%d__", i), block)
+	}
+	return out
+}
+
+func findBody(n *html.Node) *html.Node {
+	if n.Type == html.ElementNode && n.Data == "body" {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if res := findBody(c); res != nil {
+			return res
+		}
+	}
+	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Caminar el árbol HTML parseado
+// -----------------------------------------------------------------------------
+func walkNode(buf *bytes.Buffer, n *html.Node, logicalPath string, counter *int, slotDefs *[]string, blocks []string) error {
+	switch n.Type {
+	case html.TextNode:
+		buf.WriteString(restoreTemplateBlocks(n.Data, blocks))
+
+	case html.ElementNode:
+		if strings.HasPrefix(n.Data, "__TPL_") {
+			buf.WriteString(n.Data)
+			return nil
+		}
+
+		// Teggo-component marcado
+		if n.Data == "teggo-component" {
+			var compName string
+			props := []html.Attribute{}
+			for _, a := range n.Attr {
+				if a.Key == "teggo:name" {
+					compName = a.Val
+				} else {
+					props = append(props, a)
+				}
 			}
-			if nextOpen != -1 && nextOpen < nextClose {
-				depth++
-				i += nextOpen + len(openTag)
-			} else {
-				depth--
-				if depth == 0 {
-					innerEnd := i + nextClose
-					inner := output[innerStart:innerEnd]
-					slotName := ""
-					if slotRE.MatchString(output[m[0]:m[1]]) {
-						slotName = slotRE.FindStringSubmatch(output[m[0]:m[1]])[2]
-					}
-					props := ps.parseProps(propsStr)
-					var replaced string
-					if slotName != "" {
-						replaced = ps.mergeSlotWithName(props, slotName, ps.convert(inner))
-					} else {
-						replaced = ps.mergeSlot(props, ps.convert(inner))
-					}
-					// Componente → sólo el partial, descartamos el cierre HTML
-					newBlock := fmt.Sprintf(`{{partial "%s" (%s)}}`, tag, replaced)
-					output = output[:start] + newBlock + output[innerEnd+len(closeTag):]
+
+			if compName != "" && isRegisteredComponent(compName) {
+				return renderComponent(buf, &html.Node{
+					Type:       html.ElementNode,
+					Data:       compName,
+					Attr:       props,
+					FirstChild: n.FirstChild,
+				}, compName, logicalPath, counter, slotDefs, blocks)
+			}
+		}
+
+		// Tag HTML normal
+		buf.WriteString("<" + n.Data)
+		for _, attr := range n.Attr {
+			buf.WriteString(fmt.Sprintf(` %s="%s"`, attr.Key, attr.Val))
+		}
+		buf.WriteString(">")
+
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if err := walkNode(buf, c, logicalPath, counter, slotDefs, blocks); err != nil {
+				return err
+			}
+		}
+		buf.WriteString("</" + n.Data + ">")
+	}
+	return nil
+}
+
+// Verifica si es un componente Teggo registrado
+func isRegisteredComponent(name string) bool {
+	_, ok := componentRegistry[name]
+	return ok
+}
+
+// Renderiza la llamada al template GoTpl
+func renderComponent(buf *bytes.Buffer, n *html.Node, componentName, logicalPath string, counter *int, slotDefs *[]string, blocks []string) error {
+	// Props
+	props := map[string]string{}
+	for _, attr := range n.Attr {
+		props[attr.Key] = attr.Val
+	}
+
+	// Slots
+	childSlots := map[string]string{}
+	var anonSlotContent bytes.Buffer
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type == html.ElementNode && c.Data == "slot" {
+			// Slot nombrado o anónimo
+			nameAttr := "slot"
+			for _, a := range c.Attr {
+				if a.Key == "name" {
+					nameAttr = a.Val
 					break
 				}
-				i += nextClose + len(closeTag)
 			}
-		}
-	}
-
-	// Slots nombrados
-	output = reNamedSlot.ReplaceAllStringFunc(output, func(m string) string {
-		name := reNamedSlot.FindStringSubmatch(m)[1]
-		return fmt.Sprintf(`{{template "%s" .}}`, name)
-	})
-	// Slot anónimo
-	output = reAnonSlot.ReplaceAllString(output, `{{template "Slot" .}}`)
-
-	return output
-}
-
-func (ps *parserState) nextSlot(inner string) string {
-	ps.slotID++
-	name := fmt.Sprintf("__slot_%s_%d", ps.fileName, ps.slotID)
-	trimmed := strings.Trim(inner, "\n")
-	def := fmt.Sprintf("{{define \"%s\"}}\n%s\n{{end}}", name, trimmed)
-	ps.slots = append(ps.slots, def)
-	return name
-}
-
-func (ps *parserState) parseProps(propStr string) string {
-	var dicts, spreads []string
-	for _, m := range propRE.FindAllStringSubmatch(propStr, -1) {
-		if m[3] != "" {
-			spreads = append(spreads, "."+m[3])
+			var slotBuf bytes.Buffer
+			for gc := c.FirstChild; gc != nil; gc = gc.NextSibling {
+				walkNode(&slotBuf, gc, logicalPath, counter, slotDefs, blocks)
+			}
+			slotName := slotDefineName(logicalPath, componentName, nameAttr, *counter)
+			*slotDefs = append(*slotDefs, fmt.Sprintf(`{{define "%s"}}%s{{end}}`, slotName, slotBuf.String()))
+			childSlots[nameAttr] = slotName
+			*counter++
 		} else {
-			dicts = append(dicts, fmt.Sprintf(`"%s" "%s"`, m[1], m[2]))
+			// Slot anónimo
+			walkNode(&anonSlotContent, c, logicalPath, counter, slotDefs, blocks)
 		}
 	}
-	dictCode := "dict " + strings.Join(dicts, " ")
-	if len(dicts) == 0 && len(spreads) == 1 {
-		return spreads[0]
+
+	if strings.TrimSpace(anonSlotContent.String()) != "" {
+		slotName := slotDefineName(logicalPath, componentName, "slot", *counter)
+		*slotDefs = append(*slotDefs, fmt.Sprintf(`{{define "%s"}}%s{{end}}`, slotName, anonSlotContent.String()))
+		childSlots["slot"] = slotName
+		*counter++
 	}
-	if len(spreads) == 0 {
-		return dictCode
+
+	// Generar llamada GoTpl
+	buf.WriteString(`{{template "` + componentName + `" dict `)
+	for k, v := range props {
+		fmt.Fprintf(buf, `"%s" "%s" `, k, v)
 	}
-	code := spreads[0]
-	for _, s := range spreads[1:] {
-		code = fmt.Sprintf("merge %s %s", code, s)
+	for k, v := range childSlots {
+		fmt.Fprintf(buf, `"%s" (template "%s" .) `, k, v)
 	}
-	return fmt.Sprintf("merge %s (%s)", code, dictCode)
+	buf.WriteString(`}}`)
+	return nil
 }
 
-func (ps *parserState) mergeSlot(dictCode, inner string) string {
-	name := ps.nextSlot(inner)
-	if strings.Contains(dictCode, "dict") {
-		return strings.Replace(dictCode, "dict", fmt.Sprintf(`dict "Slot" (partial "%s" .)`, name), 1)
-	}
-	return fmt.Sprintf(`merge %s (dict "Slot" (partial "%s" .))`, dictCode, name)
-}
-
-func (ps *parserState) mergeSlotWithName(dictCode, slotName, inner string) string {
-	name := ps.nextSlot(inner)
-	if strings.Contains(dictCode, "dict") {
-		return strings.Replace(dictCode, "dict", fmt.Sprintf(`dict "%s" (partial "%s" .)`, slotName, name), 1)
-	}
-	return fmt.Sprintf(`merge %s (dict "%s" (partial "%s" .))`, dictCode, slotName, name)
+func slotDefineName(logicalPath, component, slotName string, counter int) string {
+	return fmt.Sprintf("%s__%s__%s__%d", logicalPath, component, slotName, counter)
 }

@@ -9,13 +9,13 @@
     {{range $user := .Users}}
     <li>
       <UserCard {...$user} ShowActions="true">
-        <Button Class="edit">Editar</Button>
+        <MyButton Class="edit">Editar</MyButton>
       </UserCard>
     </li>
     {{end}}
   </ul>
 
-  <Footer slot="Footer">
+  <slot slot="Footer">
     <small>© 2025 Teggo - Todos los derechos reservados.</small>
-  </Footer>
+  </slot>
 </Card>

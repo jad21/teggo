@@ -10,10 +10,10 @@ import (
 func main() {
 	// 1. Lista de archivos de templates a cargar
 	files := teggo.Discover("./examples", "*.html") // helper opcional
-	fmt.Println("Templates detectados:")            // ← inspección rápida
-	for _, t := range files {                       // ← método helper opcional
-		fmt.Println(" •", t)
-	}
+	// fmt.Println("Templates detectados:")            // ← inspección rápida
+	// for _, t := range files {                       // ← método helper opcional
+	// 	fmt.Println(" •", t)
+	// }
 
 	// 2. Inicializa el engine Teggo
 	engine, err := teggo.NewEngine(files, true)

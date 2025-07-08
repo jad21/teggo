@@ -55,28 +55,3 @@ func printTemplateError(path, tpl string, err error) {
 		}
 	}
 }
-
-// --- helpers de math pequeños ---
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// commonDir retorna el directorio común para varios paths absolutos.
-func commonDir(paths []string) string {
-	dir := filepath.Dir(paths[0])
-	for _, p := range paths[1:] {
-		for !strings.HasPrefix(p, dir) && dir != string(os.PathSeparator) {
-			dir = filepath.Dir(dir)
-		}
-	}
-	return dir
-}
